@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { ArtStyle } from './types';
-import { regenerateImage, editImage, describeImage } from './services/geminiService';
+import { regenerateImage, editImage, describeImage, translateText } from './services/geminiService';
 import Header from './components/Header';
 import UploadSection from './components/UploadSection';
 import Controls from './components/Controls';
@@ -24,6 +24,7 @@ interface RegeneratedFrame {
 interface OriginalFrame {
   src: string;
   prompt?: string;
+  translatedPrompt?: string;
 }
 
 export default function App() {
@@ -41,7 +42,7 @@ export default function App() {
   const [selectedRegenFrames, setSelectedRegenFrames] = useState<Set<number>>(new Set());
   const [activeSelection, setActiveSelection] = useState<'original' | 'regenerated' | null>(null);
 
-  const [previewImages, setPreviewImages] = useState<{ items: Array<{ src: string; prompt?: string; }>; startIndex: number; isEditable: boolean; } | null>(null);
+  const [previewImages, setPreviewImages] = useState<{ items: Array<{ src: string; prompt?: string; translatedPrompt?: string; }>; startIndex: number; isEditable: boolean; } | null>(null);
   const [aspectRatio, setAspectRatio] = useState<number | null>(null);
 
 
@@ -273,7 +274,7 @@ export default function App() {
       const fullPrompt = `Image Description:\n\n${description}`;
 
       const newOriginalFrames = originalFrames.map(frame => 
-        frame.src === currentSrc ? { ...frame, prompt: fullPrompt } : frame
+        frame.src === currentSrc ? { ...frame, prompt: fullPrompt, translatedPrompt: undefined } : frame
       );
       setOriginalFrames(newOriginalFrames);
       setDescribeCount(prev => prev + 1);
@@ -281,7 +282,7 @@ export default function App() {
       if (previewImages) {
         const newPreviewItems = previewImages.items.map(item =>
           item.src === currentSrc
-            ? { ...item, prompt: fullPrompt }
+            ? { ...item, prompt: fullPrompt, translatedPrompt: undefined }
             : item
         );
         setPreviewImages({ ...previewImages, items: newPreviewItems });
@@ -291,6 +292,42 @@ export default function App() {
       const errorMessage = error instanceof Error ? error.message : String(error);
       alert(`Failed to describe image. ${errorMessage}`);
       throw error;
+    }
+  };
+
+  const handleTranslatePrompt = async (currentSrc: string) => {
+    const frameIndex = originalFrames.findIndex(f => f.src === currentSrc);
+    if (frameIndex === -1) {
+        alert("An error occurred: Could not find the source image to translate its prompt.");
+        throw new Error("Source image not found for translation.");
+    }
+    
+    const originalPrompt = originalFrames[frameIndex]?.prompt;
+    if (!originalPrompt) {
+        alert("Please describe the image first before translating.");
+        throw new Error("No prompt to translate.");
+    }
+    
+    try {
+        const translation = await translateText(originalPrompt, 'Indonesian');
+
+        const newOriginalFrames = [...originalFrames];
+        newOriginalFrames[frameIndex] = { ...newOriginalFrames[frameIndex], translatedPrompt: translation };
+        setOriginalFrames(newOriginalFrames);
+
+        if (previewImages) {
+            const newPreviewItems = previewImages.items.map(item =>
+              item.src === currentSrc
+                ? { ...item, translatedPrompt: translation }
+                : item
+            );
+            setPreviewImages({ ...previewImages, items: newPreviewItems });
+        }
+
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        alert(`Failed to translate prompt. ${errorMessage}`);
+        throw error;
     }
   };
   
@@ -335,7 +372,7 @@ export default function App() {
             const base64Data = frame.src.split(',')[1];
             const description = await describeImage(base64Data);
             
-            newOriginals[frameIndex] = { ...frame, prompt: `Image Description:\n\n${description}` };
+            newOriginals[frameIndex] = { ...frame, prompt: `Image Description:\n\n${description}`, translatedPrompt: undefined };
             setOriginalFrames([...newOriginals]);
             descriptionsMade++;
 
@@ -574,6 +611,7 @@ export default function App() {
         isEditable={previewImages.isEditable}
         onEdit={handleEditImage}
         onDescribe={handleDescribeImage}
+        onTranslate={handleTranslatePrompt}
         remainingDescribes={remainingDescribes}
       />}
     </div>

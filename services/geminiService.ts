@@ -6,15 +6,36 @@ import { ArtStyle } from "../types";
  * @throws An error if the API key is not set.
  */
 const getAiClient = () => {
-  const apiKey = localStorage.getItem('gemini_api_key')
-                || import.meta.env.VITE_API_KEY;  // gunakan import.meta.env
-  if (!apiKey) {
-    throw new Error(
-      'Gemini API key is not set. Please configure VITE_API_KEY in Vercel or via the settings UI.'
-    );
-  }
-  return new GoogleGenAI({ apiKey });
-};
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) {
+      throw new Error('Gemini API key is not set. Please configure the API_KEY environment variable.');
+    }
+    return new GoogleGenAI({ apiKey });
+}
+
+/**
+ * Translates a given text to a specified target language using Gemini.
+ * @param textToTranslate The text to be translated.
+ * @param targetLanguage The target language (e.g., 'Indonesian').
+ * @returns A promise that resolves to the translated text.
+ */
+export async function translateText(textToTranslate: string, targetLanguage: string): Promise<string> {
+    const ai = getAiClient();
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: {
+            parts: [{
+                text: `Translate the following text to ${targetLanguage}. Only return the translated text, without any additional explanations, labels, or context.
+Text: "${textToTranslate}"`
+            }]
+        },
+        config: {
+            // Lower temperature for more direct, less creative translation
+            temperature: 0.1,
+        }
+    });
+    return response.text.trim();
+}
 
 /**
  * Uses Gemini to generate a textual description of a given image.
