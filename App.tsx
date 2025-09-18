@@ -1,14 +1,12 @@
 
-import React, { useState, useCallback } from 'react';
-import { ArtStyle, RegenerationEngine } from './types';
-import { extractFrames } from './utils/videoProcessor';
+import React, { useState, useCallback, useEffect } from 'react';
+import { ArtStyle } from './types';
 import { regenerateImage, editImage } from './services/geminiService';
 import Header from './components/Header';
 import UploadSection from './components/UploadSection';
 import Controls from './components/Controls';
 import Gallery from './components/Gallery';
 import Loader from './components/Loader';
-import ProcessingControls from './components/ProcessingControls';
 import ActionControls from './components/ActionControls';
 import RegenActionControls from './components/RegenActionControls';
 import ImagePreviewModal from './components/ImagePreviewModal';
@@ -16,8 +14,7 @@ import VideoPreview from './components/VideoPreview';
 
 declare const JSZip: any;
 
-const MAX_FRAMES = 30; // Limit the number of frames to prevent browser issues
-const FRAMES_PER_SECOND = 2; // Extract 2 frames per second
+const DAILY_REGEN_LIMIT = 10;
 const API_CALL_DELAY_MS = 1500; // 1.5 second delay between API calls to avoid rate limiting
 
 export default function App() {
@@ -26,12 +23,10 @@ export default function App() {
   const [originalFrames, setOriginalFrames] = useState<string[]>([]);
   const [regeneratedFrames, setRegeneratedFrames] = useState<string[]>([]);
   const [selectedStyle, setSelectedStyle] = useState<ArtStyle>(ArtStyle.CARTOON);
-  const [selectedEngine, setSelectedEngine] = useState<RegenerationEngine>(RegenerationEngine.STYLE_TRANSFER);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [progressMessage, setProgressMessage] = useState<string>('');
   
-  const [blurThreshold, setBlurThreshold] = useState<number>(75);
-  const [similarityThreshold, setSimilarityThreshold] = useState<number>(10);
+  const [remainingRegens, setRemainingRegens] = useState<number>(DAILY_REGEN_LIMIT);
 
   const [selectedFrames, setSelectedFrames] = useState<Set<number>>(new Set());
   const [selectedRegenFrames, setSelectedRegenFrames] = useState<Set<number>>(new Set());
@@ -40,39 +35,27 @@ export default function App() {
   const [previewImages, setPreviewImages] = useState<{ srcs: string[]; startIndex: number; isEditable: boolean; } | null>(null);
   const [aspectRatio, setAspectRatio] = useState<number | null>(null);
 
-
-  const handleAutoExtract = useCallback(async () => {
-    if (!videoFile) {
-        alert('Could not find the video file to process.');
-        return;
+  useEffect(() => {
+    const today = new Date().toISOString().split('T')[0];
+    const usageData = localStorage.getItem('geminiFrameRegenUsage');
+    let currentCount = 0;
+    if (usageData) {
+        try {
+            const { date, count } = JSON.parse(usageData);
+            if (date === today) {
+                currentCount = count;
+            } else {
+                // If it's a new day, reset the data
+                localStorage.setItem('geminiFrameRegenUsage', JSON.stringify({ date: today, count: 0 }));
+            }
+        } catch (error) {
+            console.error("Failed to parse usage data from localStorage", error);
+            localStorage.removeItem('geminiFrameRegenUsage');
+        }
     }
-    setIsLoading(true);
-    setProgressMessage('Extracting frames from video... This may take a moment.');
-    setOriginalFrames([]);
-    setRegeneratedFrames([]);
-    setSelectedFrames(new Set());
-    setSelectedRegenFrames(new Set());
-    setActiveSelection(null);
+    setRemainingRegens(DAILY_REGEN_LIMIT - currentCount);
+  }, []);
 
-    try {
-      const { frames } = await extractFrames(
-        videoFile, 
-        FRAMES_PER_SECOND, 
-        MAX_FRAMES, 
-        (progress) => {
-         setProgressMessage(`Processing... Found ${progress.current} of ${progress.total} unique frames.`);
-        },
-        { blurThreshold, similarityThreshold }
-      );
-      setOriginalFrames(frames);
-    } catch (error) {
-      console.error('Error extracting frames:', error);
-      alert('Failed to extract frames from the video. Please try a different video file.');
-    } finally {
-      setIsLoading(false);
-      setProgressMessage('');
-    }
-  }, [videoFile, blurThreshold, similarityThreshold]);
 
   const handleVideoUpload = useCallback((newVideoFile: File) => {
     setVideoFile(newVideoFile);
@@ -100,10 +83,6 @@ export default function App() {
         return [...prevFrames, frameData];
     });
   }, []);
-
-  const handleReExtract = useCallback(async () => {
-    await handleAutoExtract();
-  }, [handleAutoExtract]);
 
   const handleFrameSelect = useCallback((index: number) => {
     setSelectedRegenFrames(new Set());
@@ -194,8 +173,36 @@ export default function App() {
       return;
     }
     
+    // Determine which frames to process. If no specific indices are provided (e.g., "Regenerate All"),
+    // process all original frames. Otherwise, process only the specified indices.
+    // This allows the function to handle regenerating all frames, selected original frames, 
+    // or selected regenerated frames with a single logic path.
     const indices = indicesToProcess ?? originalFrames.map((_, i) => i);
     if (indices.length === 0) return;
+
+    // --- Daily Limit Check ---
+    const today = new Date().toISOString().split('T')[0];
+    const usageData = localStorage.getItem('geminiFrameRegenUsage');
+    let currentCount = 0;
+    if (usageData) {
+        try {
+            const { date, count } = JSON.parse(usageData);
+            if (date === today) {
+                currentCount = count;
+            }
+        } catch { /* ignore parsing errors */ }
+    }
+    
+    if (currentCount + indices.length > DAILY_REGEN_LIMIT) {
+        const remaining = DAILY_REGEN_LIMIT - currentCount;
+        alert(`You have ${remaining} regeneration${remaining !== 1 ? 's' : ''} left today. You are trying to regenerate ${indices.length} frames. Please select fewer frames or try again tomorrow.`);
+        return;
+    }
+
+    const newCount = currentCount + indices.length;
+    localStorage.setItem('geminiFrameRegenUsage', JSON.stringify({ date: today, count: newCount }));
+    setRemainingRegens(DAILY_REGEN_LIMIT - newCount);
+    // --- End Daily Limit Check ---
 
     setIsLoading(true);
 
@@ -205,43 +212,28 @@ export default function App() {
         newFrames.fill('', regeneratedFrames.length);
     }
 
-    let styleReferenceFrame: string | undefined = undefined;
-
     try {
       for (let i = 0; i < indices.length; i++) {
         const frameIndex = indices[i];
         const progressIndicator = `(${i + 1} of ${indices.length})`;
 
-        setProgressMessage(`Regenerating frame ${frameIndex + 1} ${progressIndicator} in ${selectedStyle} style...`);
-        if (selectedEngine === RegenerationEngine.REIMAGINE) {
-          setProgressMessage(`Describing frame ${frameIndex + 1} ${progressIndicator}...`);
-        }
+        setProgressMessage(`Re-imagining frame ${frameIndex + 1} ${progressIndicator} in ${selectedStyle} style...`);
         
+        // IMPORTANT: Always use the original frame as the source for regeneration.
+        // This ensures that when re-regenerating a frame from the "Regenerated Frames"
+        // gallery, we are not using a lower-quality, previously generated image as input.
+        // Instead, we use the pristine original and apply the currently selected style.
         const base64Data = originalFrames[frameIndex].split(',')[1];
         
-        const styleReferenceBase64 = (selectedEngine === RegenerationEngine.STYLE_TRANSFER && styleReferenceFrame) 
-            ? styleReferenceFrame.split(',')[1] 
-            : undefined;
-
         const newFrameData = await regenerateImage(
             base64Data, 
             selectedStyle,
-            selectedEngine,
-            aspectRatio, 
-            styleReferenceBase64
+            aspectRatio
         );
-
-        if (selectedEngine === RegenerationEngine.REIMAGINE) {
-            setProgressMessage(`Generating frame ${frameIndex + 1} with Imagen ${progressIndicator}...`);
-        }
 
         const newFrameSrc = `data:image/jpeg;base64,${newFrameData}`;
         newFrames[frameIndex] = newFrameSrc;
 
-        if (i === 0 && selectedEngine === RegenerationEngine.STYLE_TRANSFER) {
-          styleReferenceFrame = newFrameSrc;
-        }
-        
         setRegeneratedFrames([...newFrames]);
 
         // Add a delay between API calls to avoid hitting rate limits
@@ -273,7 +265,7 @@ export default function App() {
       setSelectedRegenFrames(new Set());
       setActiveSelection(null);
     }
-  }, [originalFrames, regeneratedFrames, selectedStyle, selectedEngine, aspectRatio]);
+  }, [originalFrames, regeneratedFrames, selectedStyle, aspectRatio]);
 
   const handleEditImage = async (currentSrc: string, prompt: string) => {
     const imageIndexInRegenFrames = regeneratedFrames.findIndex(frame => frame === currentSrc);
@@ -435,7 +427,6 @@ export default function App() {
             <VideoPreview 
                 src={videoSrc}
                 onFrameExtracted={handleManualFrameExtract}
-                onAutoExtract={handleAutoExtract}
                 onVideoLoaded={setAspectRatio}
                 onVideoChange={handleVideoUpload}
                 disabled={isLoading}
@@ -444,15 +435,6 @@ export default function App() {
 
           {originalFrames.length > 0 && (
             <>
-              <div className="w-full h-px bg-gray-700"></div>
-              <ProcessingControls 
-                blurThreshold={blurThreshold}
-                onBlurChange={setBlurThreshold}
-                similarityThreshold={similarityThreshold}
-                onSimilarityChange={setSimilarityThreshold}
-                onReExtract={handleReExtract}
-                disabled={isLoading || activeSelection !== null}
-              />
               <div className="w-full h-px bg-gray-700"></div>
               <Gallery 
                 title="Original Frames" 
@@ -468,10 +450,9 @@ export default function App() {
               <Controls
                 selectedStyle={selectedStyle}
                 onStyleChange={setSelectedStyle}
-                selectedEngine={selectedEngine}
-                onEngineChange={setSelectedEngine}
                 onRegenerate={() => handleRegenerate()}
                 disabled={isLoading || activeSelection !== null}
+                remainingRegens={remainingRegens}
               />
             </>
           )}
@@ -499,6 +480,7 @@ export default function App() {
             onPreviewSelected={handlePreviewSelected}
             onDownload={handleDownloadSelectedOriginal}
             disabled={isLoading}
+            remainingRegens={remainingRegens}
         />
       )}
       
@@ -510,6 +492,7 @@ export default function App() {
             onPreviewSelected={handlePreviewSelectedRegenerated}
             onDownload={handleDownloadSelectedRegenerated}
             disabled={isLoading}
+            remainingRegens={remainingRegens}
         />
       )}
       

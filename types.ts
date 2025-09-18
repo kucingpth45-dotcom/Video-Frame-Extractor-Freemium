@@ -9,8 +9,3 @@ export enum ArtStyle {
   FANTASY_ART = 'Digital Fantasy Art',
   NEON_PUNK = 'Neon Punk',
 }
-
-export enum RegenerationEngine {
-  STYLE_TRANSFER = 'Style Transfer',
-  REIMAGINE = 'Re-imagine with Imagen',
-}

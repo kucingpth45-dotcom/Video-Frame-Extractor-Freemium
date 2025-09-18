@@ -1,11 +1,11 @@
 import { GoogleGenAI, Modality, Part } from "@google/genai";
-import { ArtStyle, RegenerationEngine } from "../types";
+import { ArtStyle } from "../types";
 
 // IMPORTANT: Assumes API_KEY is set in the environment variables
-const API_KEY = import.meta.env.VITE_API_KEY;
+const API_KEY = process.env.API_KEY;
 
 if (!API_KEY) {
-  throw new Error("VITE_API_KEY environment variable is not set.");
+  throw new Error("API_KEY environment variable is not set.");
 }
 
 const ai = new GoogleGenAI({ apiKey: API_KEY });
@@ -76,77 +76,57 @@ async function generateImageWithImagen(prompt: string, aspectRatio: number): Pro
     throw new Error('Imagen failed to generate an image.');
 }
 
+/**
+ * Returns a detailed prompt prefix based on the selected art style.
+ * @param style The selected ArtStyle.
+ * @returns A string to be prepended to the image description.
+ */
+const getStylePromptPrefix = (style: ArtStyle): string => {
+    switch (style) {
+        case ArtStyle.REALISTIC:
+            return "An ultra-realistic, photorealistic, high-detail photograph. Shot with a professional DSLR camera, sharp focus, intricate details. The image depicts:";
+        case ArtStyle.CARTOON:
+            return "A vibrant, colorful, bold-lined cartoon illustration in a playful style. Cel-shaded with expressive characters and clean lines. The scene is:";
+        case ArtStyle.THREE_D_PIXEL:
+            return "A detailed 3D pixel art scene, voxel art, isometric view. Retro gaming aesthetic with a vibrant color palette, blocky and charming. The scene shows:";
+        case ArtStyle.ANIME:
+            return "A beautiful Japanese anime scene in the style of a critically acclaimed animation studio. Detailed background art, cel-shaded characters, and cinematic anime lighting, depicting:";
+        case ArtStyle.VINTAGE_PHOTO:
+            return "An authentic-looking vintage sepia photograph from the early 20th century. Grainy texture, faded tones, and soft focus, capturing a timeless moment of:";
+        case ArtStyle.CLAYMATION:
+            return "A charming claymation stop-motion scene with a handcrafted look. Textured models with visible fingerprints in the clay and whimsical lighting, featuring:";
+        case ArtStyle.FANTASY_ART:
+            return "An epic digital fantasy art painting. Ethereal lighting, intricate details, and a mythical atmosphere, in the style of a high-fantasy book cover, showing:";
+        case ArtStyle.NEON_PUNK:
+            return "A neon-drenched, cyberpunk cityscape scene. Glowing neon lights, rainy streets with reflections, high-tech gadgets, and a dystopian 'neon punk' aesthetic. The scene features:";
+        default:
+            // A sensible fallback
+            return `A high-detail, cinematic image in the style of '${style}'. The image depicts:`;
+    }
+};
+
 
 /**
- * Regenerates an image using either Style Transfer or a full Re-imagination with Imagen.
+ * Regenerates an image by re-imagining it with Imagen.
  * @param base64Data The base64 encoded string of the source image.
  * @param style The artistic style to apply.
- * @param engine The regeneration engine to use.
  * @param aspectRatio The original aspect ratio of the video frame.
- * @param styleReferenceBase64 Optional base64 of an image for style consistency (Style Transfer only).
  * @returns A promise that resolves to the base64 encoded string of the new image.
  */
 export const regenerateImage = async (
   base64Data: string, 
   style: ArtStyle, 
-  engine: RegenerationEngine,
   aspectRatio: number,
-  styleReferenceBase64?: string
 ): Promise<string> => {
   try {
-    if (engine === RegenerationEngine.REIMAGINE) {
-        // Path 1: Describe the image, then generate a new one with Imagen.
-        const description = await describeImage(base64Data);
-        const finalPrompt = `A high-detail, cinematic image in the style of '${style}'. The image depicts: ${description}`;
-        return await generateImageWithImagen(finalPrompt, aspectRatio);
-
-    } else {
-        // Path 2: Use Style Transfer to edit the existing image.
-        const prompt = styleReferenceBase64
-          ? `Using the second image as a style reference, regenerate the first image in a consistent '${style}' style. Preserve the composition and subjects of the first image.`
-          : `Regenerate this image in a ${style} style. Preserve the main subjects, composition, and overall structure of the original image.`;
-
-        const targetImagePart: Part = {
-          inlineData: {
-            data: base64Data,
-            mimeType: 'image/jpeg',
-          },
-        };
-
-        const parts: Part[] = [targetImagePart];
-
-        if (styleReferenceBase64) {
-          parts.push({
-            inlineData: { data: styleReferenceBase64, mimeType: 'image/jpeg' }
-          });
-        }
-
-        parts.push({ text: prompt });
-
-        const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash-image-preview',
-          contents: { parts },
-          config: {
-            responseModalities: [Modality.IMAGE, Modality.TEXT],
-          },
-        });
-
-        const candidate = response.candidates?.[0];
-
-        if (candidate && candidate.content && candidate.content.parts) {
-          for (const part of candidate.content.parts) {
-            if (part.inlineData) {
-              return part.inlineData.data;
-            }
-          }
-        }
-        
-        if (candidate?.finishReason === 'SAFETY' || candidate?.finishReason === 'RECITATION' || response.promptFeedback?.blockReason) {
-            throw new Error(`Style Transfer was blocked. Reason: ${candidate?.finishReason || response.promptFeedback?.blockReason}.`);
-        }
-
-        throw new Error('No image was generated in the API response for Style Transfer.');
-    }
+    // Describe the image first to get a context-rich prompt.
+    const description = await describeImage(base64Data);
+    // Get the highly specific style prefix.
+    const stylePrefix = getStylePromptPrefix(style);
+    // Combine them for a powerful final prompt.
+    const finalPrompt = `${stylePrefix} ${description}`;
+    
+    return await generateImageWithImagen(finalPrompt, aspectRatio);
   } catch (error) {
     console.error("Error calling Gemini API:", error);
     if (error instanceof Error) {
