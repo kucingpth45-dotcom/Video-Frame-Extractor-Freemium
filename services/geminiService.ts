@@ -2,10 +2,10 @@ import { GoogleGenAI, Modality, Part } from "@google/genai";
 import { ArtStyle } from "../types";
 
 // IMPORTANT: Assumes API_KEY is set in the environment variables
-const API_KEY = process.env.API_KEY;
+const API_KEY = import.meta.env.VITE_API_KEY;
 
 if (!API_KEY) {
-  throw new Error("API_KEY environment variable is not set.");
+  throw new Error("VITE_API_KEY environment variable is not set.");
 }
 
 const ai = new GoogleGenAI({ apiKey: API_KEY });
