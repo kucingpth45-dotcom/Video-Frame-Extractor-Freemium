@@ -1,0 +1,5 @@
+{
+  "name": "Gemini Frame Extraction",
+  "description": "An application to extract frames from a video, regenerate them in various artistic styles using the Gemini API, and display the results in a preview gallery.",
+  "requestFramePermissions": []
+}

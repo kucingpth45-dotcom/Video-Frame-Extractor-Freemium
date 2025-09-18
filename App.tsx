@@ -1,0 +1,525 @@
+
+import React, { useState, useCallback } from 'react';
+import { ArtStyle, RegenerationEngine } from './types';
+import { extractFrames } from './utils/videoProcessor';
+import { regenerateImage, editImage } from './services/geminiService';
+import Header from './components/Header';
+import UploadSection from './components/UploadSection';
+import Controls from './components/Controls';
+import Gallery from './components/Gallery';
+import Loader from './components/Loader';
+import ProcessingControls from './components/ProcessingControls';
+import ActionControls from './components/ActionControls';
+import RegenActionControls from './components/RegenActionControls';
+import ImagePreviewModal from './components/ImagePreviewModal';
+import VideoPreview from './components/VideoPreview';
+
+declare const JSZip: any;
+
+const MAX_FRAMES = 30; // Limit the number of frames to prevent browser issues
+const FRAMES_PER_SECOND = 2; // Extract 2 frames per second
+const API_CALL_DELAY_MS = 1500; // 1.5 second delay between API calls to avoid rate limiting
+
+export default function App() {
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [videoSrc, setVideoSrc] = useState<string | null>(null);
+  const [originalFrames, setOriginalFrames] = useState<string[]>([]);
+  const [regeneratedFrames, setRegeneratedFrames] = useState<string[]>([]);
+  const [selectedStyle, setSelectedStyle] = useState<ArtStyle>(ArtStyle.CARTOON);
+  const [selectedEngine, setSelectedEngine] = useState<RegenerationEngine>(RegenerationEngine.STYLE_TRANSFER);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [progressMessage, setProgressMessage] = useState<string>('');
+  
+  const [blurThreshold, setBlurThreshold] = useState<number>(75);
+  const [similarityThreshold, setSimilarityThreshold] = useState<number>(10);
+
+  const [selectedFrames, setSelectedFrames] = useState<Set<number>>(new Set());
+  const [selectedRegenFrames, setSelectedRegenFrames] = useState<Set<number>>(new Set());
+  const [activeSelection, setActiveSelection] = useState<'original' | 'regenerated' | null>(null);
+
+  const [previewImages, setPreviewImages] = useState<{ srcs: string[]; startIndex: number; isEditable: boolean; } | null>(null);
+  const [aspectRatio, setAspectRatio] = useState<number | null>(null);
+
+
+  const handleAutoExtract = useCallback(async () => {
+    if (!videoFile) {
+        alert('Could not find the video file to process.');
+        return;
+    }
+    setIsLoading(true);
+    setProgressMessage('Extracting frames from video... This may take a moment.');
+    setOriginalFrames([]);
+    setRegeneratedFrames([]);
+    setSelectedFrames(new Set());
+    setSelectedRegenFrames(new Set());
+    setActiveSelection(null);
+
+    try {
+      const { frames } = await extractFrames(
+        videoFile, 
+        FRAMES_PER_SECOND, 
+        MAX_FRAMES, 
+        (progress) => {
+         setProgressMessage(`Processing... Found ${progress.current} of ${progress.total} unique frames.`);
+        },
+        { blurThreshold, similarityThreshold }
+      );
+      setOriginalFrames(frames);
+    } catch (error) {
+      console.error('Error extracting frames:', error);
+      alert('Failed to extract frames from the video. Please try a different video file.');
+    } finally {
+      setIsLoading(false);
+      setProgressMessage('');
+    }
+  }, [videoFile, blurThreshold, similarityThreshold]);
+
+  const handleVideoUpload = useCallback((newVideoFile: File) => {
+    setVideoFile(newVideoFile);
+    setOriginalFrames([]);
+    setRegeneratedFrames([]);
+    setSelectedFrames(new Set());
+    setSelectedRegenFrames(new Set());
+    setActiveSelection(null);
+    setAspectRatio(null);
+    
+    if (videoSrc) {
+        URL.revokeObjectURL(videoSrc);
+    }
+    
+    const newVideoSrc = URL.createObjectURL(newVideoFile);
+    setVideoSrc(newVideoSrc);
+  }, [videoSrc]);
+
+  const handleManualFrameExtract = useCallback((frameData: string) => {
+    setOriginalFrames(prevFrames => {
+        // Prevent adding the same frame multiple times
+        if (prevFrames.includes(frameData)) {
+            return prevFrames;
+        }
+        return [...prevFrames, frameData];
+    });
+  }, []);
+
+  const handleReExtract = useCallback(async () => {
+    await handleAutoExtract();
+  }, [handleAutoExtract]);
+
+  const handleFrameSelect = useCallback((index: number) => {
+    setSelectedRegenFrames(new Set());
+    setActiveSelection('original');
+    setSelectedFrames(prevSelected => {
+        const newSelected = new Set(prevSelected);
+        if (newSelected.has(index)) {
+            newSelected.delete(index);
+        } else {
+            newSelected.add(index);
+        }
+        if (newSelected.size === 0) setActiveSelection(null);
+        return newSelected;
+    });
+  }, []);
+  
+  const handleRegenFrameSelect = useCallback((index: number) => {
+    setSelectedFrames(new Set());
+    setActiveSelection('regenerated');
+    setSelectedRegenFrames(prevSelected => {
+        const newSelected = new Set(prevSelected);
+        if (newSelected.has(index)) {
+            newSelected.delete(index);
+        } else {
+            newSelected.add(index);
+        }
+        if (newSelected.size === 0) setActiveSelection(null);
+        return newSelected;
+    });
+  }, []);
+
+  const handleSelectAllOriginal = useCallback(() => {
+    setSelectedRegenFrames(new Set());
+    if (selectedFrames.size === originalFrames.length) {
+      setSelectedFrames(new Set());
+      setActiveSelection(null);
+    } else {
+      setSelectedFrames(new Set(originalFrames.map((_, i) => i)));
+      setActiveSelection('original');
+    }
+  }, [originalFrames.length, selectedFrames.size]);
+  
+  const handleSelectAllRegenerated = useCallback(() => {
+    setSelectedFrames(new Set());
+    const validRegenIndices = regeneratedFrames
+      .map((frame, index) => (frame ? index : -1))
+      .filter(index => index !== -1);
+      
+    if (selectedRegenFrames.size === validRegenIndices.length) {
+      setSelectedRegenFrames(new Set());
+      setActiveSelection(null);
+    } else {
+      setSelectedRegenFrames(new Set(validRegenIndices));
+      setActiveSelection('regenerated');
+    }
+  }, [regeneratedFrames, selectedRegenFrames.size]);
+
+
+  const handleDeleteSelected = useCallback(() => {
+    if (selectedFrames.size === 0) return;
+
+    const newOriginals = originalFrames.filter((_, i) => !selectedFrames.has(i));
+    const newRegenerated = regeneratedFrames.length > 0
+        ? regeneratedFrames.filter((_, i) => !selectedFrames.has(i))
+        : [];
+    
+    setOriginalFrames(newOriginals);
+    setRegeneratedFrames(newRegenerated);
+    setSelectedFrames(new Set());
+    setActiveSelection(null);
+  }, [originalFrames, regeneratedFrames, selectedFrames]);
+
+  const handleDeleteRegenerated = useCallback(() => {
+    if (selectedRegenFrames.size === 0) return;
+    const newRegenerated = [...regeneratedFrames];
+    for (const index of selectedRegenFrames) {
+      newRegenerated[index] = ''; // Clear the frame
+    }
+    setRegeneratedFrames(newRegenerated);
+    setSelectedRegenFrames(new Set());
+    setActiveSelection(null);
+  }, [regeneratedFrames, selectedRegenFrames]);
+
+
+  const handleRegenerate = useCallback(async (indicesToProcess?: number[]) => {
+    if (originalFrames.length === 0 || !aspectRatio) {
+      alert('Please upload a video and extract frames first.');
+      return;
+    }
+    
+    const indices = indicesToProcess ?? originalFrames.map((_, i) => i);
+    if (indices.length === 0) return;
+
+    setIsLoading(true);
+
+    let newFrames = [...regeneratedFrames];
+    if (newFrames.length < originalFrames.length) {
+        newFrames.length = originalFrames.length;
+        newFrames.fill('', regeneratedFrames.length);
+    }
+
+    let styleReferenceFrame: string | undefined = undefined;
+
+    try {
+      for (let i = 0; i < indices.length; i++) {
+        const frameIndex = indices[i];
+        const progressIndicator = `(${i + 1} of ${indices.length})`;
+
+        setProgressMessage(`Regenerating frame ${frameIndex + 1} ${progressIndicator} in ${selectedStyle} style...`);
+        if (selectedEngine === RegenerationEngine.REIMAGINE) {
+          setProgressMessage(`Describing frame ${frameIndex + 1} ${progressIndicator}...`);
+        }
+        
+        const base64Data = originalFrames[frameIndex].split(',')[1];
+        
+        const styleReferenceBase64 = (selectedEngine === RegenerationEngine.STYLE_TRANSFER && styleReferenceFrame) 
+            ? styleReferenceFrame.split(',')[1] 
+            : undefined;
+
+        const newFrameData = await regenerateImage(
+            base64Data, 
+            selectedStyle,
+            selectedEngine,
+            aspectRatio, 
+            styleReferenceBase64
+        );
+
+        if (selectedEngine === RegenerationEngine.REIMAGINE) {
+            setProgressMessage(`Generating frame ${frameIndex + 1} with Imagen ${progressIndicator}...`);
+        }
+
+        const newFrameSrc = `data:image/jpeg;base64,${newFrameData}`;
+        newFrames[frameIndex] = newFrameSrc;
+
+        if (i === 0 && selectedEngine === RegenerationEngine.STYLE_TRANSFER) {
+          styleReferenceFrame = newFrameSrc;
+        }
+        
+        setRegeneratedFrames([...newFrames]);
+
+        // Add a delay between API calls to avoid hitting rate limits
+        if (i < indices.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, API_CALL_DELAY_MS));
+        }
+      }
+    } catch (error) {
+      console.error('Error regenerating frames:', error);
+      alert(`An error occurred during regeneration. Please check your Gemini API key and try again. Error: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsLoading(false);
+      setProgressMessage('');
+      
+      const finalFrames = [...newFrames]; 
+      const regeneratedIndices = indicesToProcess ?? originalFrames.map((_, i) => i);
+      
+      if (regeneratedIndices.length > 0) {
+          const regeneratedSrcs = regeneratedIndices
+              .map(index => finalFrames[index])
+              .filter(src => !!src); 
+          
+          if (regeneratedSrcs.length > 0) {
+              setPreviewImages({ srcs: regeneratedSrcs, startIndex: 0, isEditable: true });
+          }
+      }
+
+      setSelectedFrames(new Set());
+      setSelectedRegenFrames(new Set());
+      setActiveSelection(null);
+    }
+  }, [originalFrames, regeneratedFrames, selectedStyle, selectedEngine, aspectRatio]);
+
+  const handleEditImage = async (currentSrc: string, prompt: string) => {
+    const imageIndexInRegenFrames = regeneratedFrames.findIndex(frame => frame === currentSrc);
+    if (imageIndexInRegenFrames === -1) {
+      alert("An error occurred: Could not find the source image to edit.");
+      return;
+    }
+
+    try {
+      const originalBase64 = regeneratedFrames[imageIndexInRegenFrames].split(',')[1];
+      const newBase64 = await editImage(originalBase64, prompt);
+      const newSrc = `data:image/jpeg;base64,${newBase64}`;
+      
+      const newRegeneratedFrames = [...regeneratedFrames];
+      newRegeneratedFrames[imageIndexInRegenFrames] = newSrc;
+      setRegeneratedFrames(newRegeneratedFrames);
+
+      if (previewImages) {
+        const newPreviewSrcs = previewImages.srcs.map(src => src === currentSrc ? newSrc : src);
+        setPreviewImages({ ...previewImages, srcs: newPreviewSrcs });
+      }
+
+    } catch (error) {
+      console.error('Error editing image:', error);
+      alert(`Failed to edit image. ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
+  };
+
+  const handleFramePreview = (src: string, gallery: 'original' | 'regenerated') => {
+    const frameList = gallery === 'original' ? originalFrames : regeneratedFrames;
+    const validFrames = frameList.filter(f => f);
+    const startIndex = validFrames.indexOf(src);
+    if (startIndex !== -1) {
+      setPreviewImages({ 
+        srcs: validFrames, 
+        startIndex, 
+        isEditable: gallery === 'regenerated' 
+      });
+    }
+  };
+  
+  const handlePreviewSelected = useCallback(() => {
+    if (selectedFrames.size === 0) return;
+    const selectedSrcs = Array.from(selectedFrames)
+        .sort((a, b) => a - b)
+        .map(index => originalFrames[index]);
+    setPreviewImages({ srcs: selectedSrcs, startIndex: 0, isEditable: false });
+  }, [selectedFrames, originalFrames]);
+  
+  const handlePreviewSelectedRegenerated = useCallback(() => {
+    if (selectedRegenFrames.size === 0) return;
+    const selectedSrcs = Array.from(selectedRegenFrames)
+        .sort((a, b) => a - b)
+        .map(index => regeneratedFrames[index]);
+    setPreviewImages({ srcs: selectedSrcs, startIndex: 0, isEditable: true });
+  }, [selectedRegenFrames, regeneratedFrames]);
+  
+  const handleDownloadSelectedOriginal = async () => {
+    if (selectedFrames.size === 0) return;
+
+    setIsLoading(true);
+    setProgressMessage(`Zipping ${selectedFrames.size} original frames...`);
+
+    try {
+        const zip = new JSZip();
+        const selectedArray = Array.from(selectedFrames);
+
+        for (let i = 0; i < selectedArray.length; i++) {
+            const frameIndex = selectedArray[i];
+            const frameData = originalFrames[frameIndex];
+            if (frameData) {
+                const base64 = frameData.split(',')[1];
+                const fileName = `original_frame_${String(frameIndex + 1).padStart(4, '0')}.jpg`;
+                zip.file(fileName, base64, { base64: true });
+            }
+        }
+
+        const content = await zip.generateAsync({ type: "blob" });
+        
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(content);
+        link.download = "original_frames.zip";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(link.href);
+
+    } catch (error) {
+        console.error("Error creating zip file for original frames:", error);
+        alert("Failed to create zip file for download.");
+    } finally {
+        setIsLoading(false);
+        setProgressMessage('');
+        setSelectedFrames(new Set());
+        setActiveSelection(null);
+    }
+  };
+
+  const handleDownloadSelectedRegenerated = async () => {
+    if (selectedRegenFrames.size === 0) return;
+
+    setIsLoading(true);
+    setProgressMessage(`Zipping ${selectedRegenFrames.size} frames...`);
+
+    try {
+        const zip = new JSZip();
+        const selectedArray = Array.from(selectedRegenFrames);
+
+        for (let i = 0; i < selectedArray.length; i++) {
+            const frameIndex = selectedArray[i];
+            const frameData = regeneratedFrames[frameIndex];
+            if (frameData) {
+                const base64 = frameData.split(',')[1];
+                const fileName = `regenerated_frame_${String(frameIndex + 1).padStart(4, '0')}.jpg`;
+                zip.file(fileName, base64, { base64: true });
+            }
+        }
+
+        const content = await zip.generateAsync({ type: "blob" });
+        
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(content);
+        link.download = "regenerated_frames.zip";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(link.href);
+
+    } catch (error) {
+        console.error("Error creating zip file:", error);
+        alert("Failed to create zip file for download.");
+    } finally {
+        setIsLoading(false);
+        setProgressMessage('');
+        setSelectedRegenFrames(new Set());
+        setActiveSelection(null);
+    }
+  };
+
+
+  const handleClosePreview = () => {
+    setPreviewImages(null);
+  };
+  
+  const validRegenCount = regeneratedFrames.filter(f => f).length;
+
+
+  return (
+    <div className="min-h-screen bg-gray-900 text-gray-100 font-sans pb-24">
+      {isLoading && <Loader message={progressMessage} />}
+      <main className="container mx-auto px-4 py-8">
+        <Header />
+
+        <div className="max-w-4xl mx-auto bg-gray-800/50 rounded-2xl shadow-2xl backdrop-blur-sm p-6 md:p-8 space-y-8">
+          {!videoSrc ? (
+            <UploadSection onVideoUpload={handleVideoUpload} disabled={isLoading} />
+          ) : (
+            <VideoPreview 
+                src={videoSrc}
+                onFrameExtracted={handleManualFrameExtract}
+                onAutoExtract={handleAutoExtract}
+                onVideoLoaded={setAspectRatio}
+                onVideoChange={handleVideoUpload}
+                disabled={isLoading}
+            />
+          )}
+
+          {originalFrames.length > 0 && (
+            <>
+              <div className="w-full h-px bg-gray-700"></div>
+              <ProcessingControls 
+                blurThreshold={blurThreshold}
+                onBlurChange={setBlurThreshold}
+                similarityThreshold={similarityThreshold}
+                onSimilarityChange={setSimilarityThreshold}
+                onReExtract={handleReExtract}
+                disabled={isLoading || activeSelection !== null}
+              />
+              <div className="w-full h-px bg-gray-700"></div>
+              <Gallery 
+                title="Original Frames" 
+                frames={originalFrames} 
+                selectedFrames={selectedFrames}
+                onFrameSelect={handleFrameSelect}
+                onFramePreview={(src) => handleFramePreview(src, 'original')}
+                aspectRatio={aspectRatio}
+                onSelectAll={handleSelectAllOriginal}
+                isAllSelected={originalFrames.length > 0 && selectedFrames.size === originalFrames.length}
+              />
+              <div className="w-full h-px bg-gray-700"></div>
+              <Controls
+                selectedStyle={selectedStyle}
+                onStyleChange={setSelectedStyle}
+                selectedEngine={selectedEngine}
+                onEngineChange={setSelectedEngine}
+                onRegenerate={() => handleRegenerate()}
+                disabled={isLoading || activeSelection !== null}
+              />
+            </>
+          )}
+
+          {validRegenCount > 0 && (
+             <Gallery 
+                title="Regenerated Frames" 
+                frames={regeneratedFrames} 
+                selectedFrames={selectedRegenFrames}
+                onFrameSelect={handleRegenFrameSelect}
+                onFramePreview={(src) => handleFramePreview(src, 'regenerated')}
+                aspectRatio={aspectRatio}
+                onSelectAll={handleSelectAllRegenerated}
+                isAllSelected={validRegenCount > 0 && selectedRegenFrames.size === validRegenCount}
+             />
+          )}
+        </div>
+      </main>
+      
+      {activeSelection === 'original' && selectedFrames.size > 0 && (
+        <ActionControls
+            selectionCount={selectedFrames.size}
+            onDelete={handleDeleteSelected}
+            onRegenerate={() => handleRegenerate(Array.from(selectedFrames))}
+            onPreviewSelected={handlePreviewSelected}
+            onDownload={handleDownloadSelectedOriginal}
+            disabled={isLoading}
+        />
+      )}
+      
+      {activeSelection === 'regenerated' && selectedRegenFrames.size > 0 && (
+        <RegenActionControls
+            selectionCount={selectedRegenFrames.size}
+            onDelete={handleDeleteRegenerated}
+            onRegenerateAgain={() => handleRegenerate(Array.from(selectedRegenFrames))}
+            onPreviewSelected={handlePreviewSelectedRegenerated}
+            onDownload={handleDownloadSelectedRegenerated}
+            disabled={isLoading}
+        />
+      )}
+      
+      {previewImages && <ImagePreviewModal 
+        srcs={previewImages.srcs} 
+        startIndex={previewImages.startIndex} 
+        onClose={handleClosePreview}
+        isEditable={previewImages.isEditable}
+        onEdit={handleEditImage}
+      />}
+    </div>
+  );
+}
