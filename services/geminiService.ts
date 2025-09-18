@@ -1,32 +1,14 @@
-
 import { GoogleGenAI, Modality, Part } from "@google/genai";
 import { ArtStyle } from "../types";
-
-const getApiKey = (): string => {
-    // Prefer the key from localStorage, fall back to environment variable.
-    return localStorage.getItem('gemini_api_key') || process.env.API_KEY || '';
-}
-
-/**
- * Updates the API key in localStorage.
- * @param key The new API key. If empty or null, the key is removed.
- */
-export const setApiKey = (key: string) => {
-    if (key) {
-        localStorage.setItem('gemini_api_key', key);
-    } else {
-        localStorage.removeItem('gemini_api_key');
-    }
-}
 
 /**
  * Creates and returns a new GoogleGenAI instance with the current API key.
  * @throws An error if the API key is not set.
  */
 const getAiClient = () => {
-    const apiKey = getApiKey();
+    const apiKey = process.env.API_KEY;
     if (!apiKey) {
-      throw new Error('Gemini API key is not set. Please add a key in the settings (top-right icon).');
+      throw new Error('Gemini API key is not set. Please configure the API_KEY environment variable.');
     }
     return new GoogleGenAI({ apiKey });
 }
@@ -36,7 +18,7 @@ const getAiClient = () => {
  * @param base64Data The base64 encoded string of the source image.
  * @returns A promise that resolves to a detailed description of the image.
  */
-async function describeImage(base64Data: string): Promise<string> {
+export async function describeImage(base64Data: string): Promise<string> {
     const ai = getAiClient();
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
@@ -49,7 +31,7 @@ async function describeImage(base64Data: string): Promise<string> {
                     }
                 },
                 {
-                    text: 'Describe this image in a concise, detailed paragraph for an image generation AI. Focus on the main subject, its actions, the environment, and the overall composition.'
+                    text: 'Generate a highly detailed, objective description of this image, suitable for a text-to-image AI. Describe the scene, subjects, colors, lighting, and composition as if you were explaining it to someone who cannot see it. Avoid subjective interpretations or artistic styles. The description should be a single, dense paragraph.'
                 }
             ]
         }
@@ -133,30 +115,49 @@ const getStylePromptPrefix = (style: ArtStyle): string => {
  * @param base64Data The base64 encoded string of the source image.
  * @param style The artistic style to apply.
  * @param aspectRatio The original aspect ratio of the video frame.
- * @returns A promise that resolves to the base64 encoded string of the new image.
+ * @returns A promise that resolves to an object containing the new image and the prompt used.
  */
 export const regenerateImage = async (
   base64Data: string, 
   style: ArtStyle, 
   aspectRatio: number,
-): Promise<string> => {
+): Promise<{ image: string; prompt: string; }> => {
   try {
     // Describe the image first to get a context-rich prompt.
     const description = await describeImage(base64Data);
     // Get the highly specific style prefix.
     const stylePrefix = getStylePromptPrefix(style);
-    // Combine them for a powerful final prompt.
-    const finalPrompt = `${stylePrefix} ${description}`;
     
-    return await generateImageWithImagen(finalPrompt, aspectRatio);
+    // Enforce a maximum prompt length of 500 characters.
+    const MAX_PROMPT_LENGTH = 500;
+    const remainingLength = MAX_PROMPT_LENGTH - stylePrefix.length - 1; // -1 for the space separator
+
+    let truncatedDescription = description;
+    if (remainingLength > 0 && description.length > remainingLength) {
+        truncatedDescription = description.substring(0, remainingLength).trim();
+        // Go back to the last full word to avoid cutting words in half.
+        const lastSpaceIndex = truncatedDescription.lastIndexOf(' ');
+        if (lastSpaceIndex !== -1) {
+            truncatedDescription = truncatedDescription.substring(0, lastSpaceIndex);
+        }
+    } else if (remainingLength <= 0) {
+        // If the prefix itself is too long, we can't add a description.
+        truncatedDescription = "";
+    }
+    
+    // Combine them for a powerful final prompt.
+    const finalPrompt = `${stylePrefix} ${truncatedDescription}`.trim();
+    
+    const image = await generateImageWithImagen(finalPrompt, aspectRatio);
+    return { image, prompt: finalPrompt };
   } catch (error) {
     console.error("Error calling Gemini API:", error);
     if (error instanceof Error) {
         if (error.message.includes('API key not valid')) {
-            throw new Error('Your Gemini API key is not valid. Please use the settings icon to update it.');
+            throw new Error('Your Gemini API key is not valid. Please check your configuration.');
         }
         if (error.message.includes('429') || error.message.includes('RESOURCE_EXHAUSTED')) {
-            throw new Error('API rate limit or quota exceeded. Please wait a moment, or use the settings icon to provide a new API key.');
+            throw new Error('API rate limit or quota exceeded. Please try again later.');
         }
         if (error.message.includes('blocked')) {
             throw new Error('Image generation was blocked due to safety policies. Please try a different frame.');
@@ -170,12 +171,12 @@ export const regenerateImage = async (
  * Edits an image based on a textual prompt using Gemini.
  * @param base64Data The base64 encoded string of the source image.
  * @param prompt The text prompt describing the desired changes.
- * @returns A promise that resolves to the base64 encoded string of the edited image.
+ * @returns A promise that resolves to an object containing the edited image and the prompt used.
  */
 export const editImage = async (
   base64Data: string,
   prompt: string,
-): Promise<string> => {
+): Promise<{ image: string; prompt: string; }> => {
   try {
     const ai = getAiClient();
     const response = await ai.models.generateContent({
@@ -201,7 +202,10 @@ export const editImage = async (
     if (candidate && candidate.content && candidate.content.parts) {
       for (const part of candidate.content.parts) {
         if (part.inlineData) {
-          return part.inlineData.data;
+          return {
+              image: part.inlineData.data,
+              prompt: `Edited with user prompt: "${prompt}"`
+          };
         }
       }
     }
@@ -215,10 +219,10 @@ export const editImage = async (
     console.error("Error calling Gemini API for editing:", error);
     if (error instanceof Error) {
         if (error.message.includes('API key not valid')) {
-            throw new Error('Your Gemini API key is not valid. Please use the settings icon to update it.');
+            throw new Error('Your Gemini API key is not valid. Please check your configuration.');
         }
         if (error.message.includes('429') || error.message.includes('RESOURCE_EXHAUSTED')) {
-            throw new Error('API rate limit or quota exceeded. Please wait a moment, or use the settings icon to provide a new API key.');
+            throw new Error('API rate limit or quota exceeded. Please try again later.');
         }
         if (error.message.includes('blocked')) {
             throw error;

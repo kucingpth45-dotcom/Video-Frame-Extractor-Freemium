@@ -1,7 +1,6 @@
-
 import React, { useState, useCallback, useEffect } from 'react';
 import { ArtStyle } from './types';
-import { regenerateImage, editImage, setApiKey } from './services/geminiService';
+import { regenerateImage, editImage, describeImage } from './services/geminiService';
 import Header from './components/Header';
 import UploadSection from './components/UploadSection';
 import Controls from './components/Controls';
@@ -11,62 +10,39 @@ import ActionControls from './components/ActionControls';
 import RegenActionControls from './components/RegenActionControls';
 import ImagePreviewModal from './components/ImagePreviewModal';
 import VideoPreview from './components/VideoPreview';
-import ApiKeyManager from './components/ApiKeyManager';
 
 declare const JSZip: any;
 
-const DAILY_REGEN_LIMIT = 10;
+const SESSION_DESCRIBE_LIMIT = 5;
 const API_CALL_DELAY_MS = 1500; // 1.5 second delay between API calls to avoid rate limiting
+
+interface RegeneratedFrame {
+  src: string;
+  prompt: string;
+}
+
+interface OriginalFrame {
+  src: string;
+  prompt?: string;
+}
 
 export default function App() {
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
-  const [originalFrames, setOriginalFrames] = useState<string[]>([]);
-  const [regeneratedFrames, setRegeneratedFrames] = useState<string[]>([]);
+  const [originalFrames, setOriginalFrames] = useState<OriginalFrame[]>([]);
+  const [regeneratedFrames, setRegeneratedFrames] = useState<Array<RegeneratedFrame | null>>([]);
   const [selectedStyle, setSelectedStyle] = useState<ArtStyle>(ArtStyle.CARTOON);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [progressMessage, setProgressMessage] = useState<string>('');
   
-  const [remainingRegens, setRemainingRegens] = useState<number>(DAILY_REGEN_LIMIT);
+  const [describeCount, setDescribeCount] = useState<number>(0);
 
   const [selectedFrames, setSelectedFrames] = useState<Set<number>>(new Set());
   const [selectedRegenFrames, setSelectedRegenFrames] = useState<Set<number>>(new Set());
   const [activeSelection, setActiveSelection] = useState<'original' | 'regenerated' | null>(null);
 
-  const [previewImages, setPreviewImages] = useState<{ srcs: string[]; startIndex: number; isEditable: boolean; } | null>(null);
+  const [previewImages, setPreviewImages] = useState<{ items: Array<{ src: string; prompt?: string; }>; startIndex: number; isEditable: boolean; } | null>(null);
   const [aspectRatio, setAspectRatio] = useState<number | null>(null);
-
-  useEffect(() => {
-    const today = new Date().toISOString().split('T')[0];
-    const usageData = localStorage.getItem('geminiFrameRegenUsage');
-    let currentCount = 0;
-    if (usageData) {
-        try {
-            const { date, count } = JSON.parse(usageData);
-            if (date === today) {
-                currentCount = count;
-            } else {
-                // If it's a new day, reset the data
-                localStorage.setItem('geminiFrameRegenUsage', JSON.stringify({ date: today, count: 0 }));
-            }
-        } catch (error) {
-            console.error("Failed to parse usage data from localStorage", error);
-            localStorage.removeItem('geminiFrameRegenUsage');
-        }
-    }
-    setRemainingRegens(DAILY_REGEN_LIMIT - currentCount);
-  }, []);
-
-  const handleChangeApiKey = useCallback(() => {
-    const currentKey = localStorage.getItem('gemini_api_key') || '';
-    const newKey = window.prompt("Please enter your Gemini API key:", currentKey);
-    
-    // The prompt returns null if the user cancels.
-    if (newKey !== null) {
-        setApiKey(newKey);
-        alert(newKey ? "API Key updated. Your next request will use the new key." : "API Key cleared. The app will now use the default key if available.");
-    }
-  }, []);
 
 
   const handleVideoUpload = useCallback((newVideoFile: File) => {
@@ -89,10 +65,10 @@ export default function App() {
   const handleManualFrameExtract = useCallback((frameData: string) => {
     setOriginalFrames(prevFrames => {
         // Prevent adding the same frame multiple times
-        if (prevFrames.includes(frameData)) {
+        if (prevFrames.some(f => f.src === frameData)) {
             return prevFrames;
         }
-        return [...prevFrames, frameData];
+        return [...prevFrames, { src: frameData }];
     });
   }, []);
 
@@ -171,7 +147,7 @@ export default function App() {
     if (selectedRegenFrames.size === 0) return;
     const newRegenerated = [...regeneratedFrames];
     for (const index of selectedRegenFrames) {
-      newRegenerated[index] = ''; // Clear the frame
+      newRegenerated[index] = null; // Clear the frame object
     }
     setRegeneratedFrames(newRegenerated);
     setSelectedRegenFrames(new Set());
@@ -185,43 +161,20 @@ export default function App() {
       return;
     }
     
-    // Determine which frames to process. If no specific indices are provided (e.g., "Regenerate All"),
-    // process all original frames. Otherwise, process only the specified indices.
-    // This allows the function to handle regenerating all frames, selected original frames, 
-    // or selected regenerated frames with a single logic path.
     const indices = indicesToProcess ?? originalFrames.map((_, i) => i);
     if (indices.length === 0) return;
 
-    // --- Daily Limit Check ---
-    const today = new Date().toISOString().split('T')[0];
-    const usageData = localStorage.getItem('geminiFrameRegenUsage');
-    let currentCount = 0;
-    if (usageData) {
-        try {
-            const { date, count } = JSON.parse(usageData);
-            if (date === today) {
-                currentCount = count;
-            }
-        } catch { /* ignore parsing errors */ }
-    }
-    
-    if (currentCount + indices.length > DAILY_REGEN_LIMIT) {
-        const remaining = DAILY_REGEN_LIMIT - currentCount;
-        alert(`You have ${remaining} regeneration${remaining !== 1 ? 's' : ''} left today. You are trying to regenerate ${indices.length} frames. Please select fewer frames or try again tomorrow.`);
-        return;
-    }
+    // Temporarily disable functionality by showing an alert.
+    alert('The AI Regeneration feature is coming soon!');
+    return;
 
-    const newCount = currentCount + indices.length;
-    localStorage.setItem('geminiFrameRegenUsage', JSON.stringify({ date: today, count: newCount }));
-    setRemainingRegens(DAILY_REGEN_LIMIT - newCount);
-    // --- End Daily Limit Check ---
-
+    /*
     setIsLoading(true);
 
     let newFrames = [...regeneratedFrames];
     if (newFrames.length < originalFrames.length) {
         newFrames.length = originalFrames.length;
-        newFrames.fill('', regeneratedFrames.length);
+        newFrames.fill(null, regeneratedFrames.length);
     }
 
     try {
@@ -231,11 +184,7 @@ export default function App() {
 
         setProgressMessage(`Re-imagining frame ${frameIndex + 1} ${progressIndicator} in ${selectedStyle} style...`);
         
-        // IMPORTANT: Always use the original frame as the source for regeneration.
-        // This ensures that when re-regenerating a frame from the "Regenerated Frames"
-        // gallery, we are not using a lower-quality, previously generated image as input.
-        // Instead, we use the pristine original and apply the currently selected style.
-        const base64Data = originalFrames[frameIndex].split(',')[1];
+        const base64Data = originalFrames[frameIndex].src.split(',')[1];
         
         const newFrameData = await regenerateImage(
             base64Data, 
@@ -243,12 +192,11 @@ export default function App() {
             aspectRatio
         );
 
-        const newFrameSrc = `data:image/jpeg;base64,${newFrameData}`;
-        newFrames[frameIndex] = newFrameSrc;
+        const newFrameSrc = `data:image/jpeg;base64,${newFrameData.image}`;
+        newFrames[frameIndex] = { src: newFrameSrc, prompt: newFrameData.prompt };
 
         setRegeneratedFrames([...newFrames]);
 
-        // Add a delay between API calls to avoid hitting rate limits
         if (i < indices.length - 1) {
           await new Promise(resolve => setTimeout(resolve, API_CALL_DELAY_MS));
         }
@@ -264,12 +212,12 @@ export default function App() {
       const regeneratedIndices = indicesToProcess ?? originalFrames.map((_, i) => i);
       
       if (regeneratedIndices.length > 0) {
-          const regeneratedSrcs = regeneratedIndices
+          const regeneratedItems = regeneratedIndices
               .map(index => finalFrames[index])
-              .filter(src => !!src); 
+              .filter((item): item is RegeneratedFrame => !!item);
           
-          if (regeneratedSrcs.length > 0) {
-              setPreviewImages({ srcs: regeneratedSrcs, startIndex: 0, isEditable: true });
+          if (regeneratedItems.length > 0) {
+              setPreviewImages({ items: regeneratedItems, startIndex: 0, isEditable: true });
           }
       }
 
@@ -277,27 +225,32 @@ export default function App() {
       setSelectedRegenFrames(new Set());
       setActiveSelection(null);
     }
+    */
   }, [originalFrames, regeneratedFrames, selectedStyle, aspectRatio]);
 
   const handleEditImage = async (currentSrc: string, prompt: string) => {
-    const imageIndexInRegenFrames = regeneratedFrames.findIndex(frame => frame === currentSrc);
+    const imageIndexInRegenFrames = regeneratedFrames.findIndex(frame => frame?.src === currentSrc);
     if (imageIndexInRegenFrames === -1) {
       alert("An error occurred: Could not find the source image to edit.");
       return;
     }
 
     try {
-      const originalBase64 = regeneratedFrames[imageIndexInRegenFrames].split(',')[1];
-      const newBase64 = await editImage(originalBase64, prompt);
+      const originalBase64 = regeneratedFrames[imageIndexInRegenFrames]!.src.split(',')[1];
+      const { image: newBase64, prompt: newPrompt } = await editImage(originalBase64, prompt);
       const newSrc = `data:image/jpeg;base64,${newBase64}`;
       
       const newRegeneratedFrames = [...regeneratedFrames];
-      newRegeneratedFrames[imageIndexInRegenFrames] = newSrc;
+      newRegeneratedFrames[imageIndexInRegenFrames] = { src: newSrc, prompt: newPrompt };
       setRegeneratedFrames(newRegeneratedFrames);
 
       if (previewImages) {
-        const newPreviewSrcs = previewImages.srcs.map(src => src === currentSrc ? newSrc : src);
-        setPreviewImages({ ...previewImages, srcs: newPreviewSrcs });
+        const newPreviewItems = previewImages.items.map(item => 
+            item.src === currentSrc 
+            ? { src: newSrc, prompt: newPrompt } 
+            : item
+        );
+        setPreviewImages({ ...previewImages, items: newPreviewItems });
       }
 
     } catch (error) {
@@ -307,33 +260,144 @@ export default function App() {
     }
   };
 
+  const handleDescribeImage = async (currentSrc: string) => {
+    const remainingDescriptions = SESSION_DESCRIBE_LIMIT - describeCount;
+    if (remainingDescriptions <= 0) {
+      alert("You have reached the description limit of 5 frames for this session.");
+      throw new Error("Description limit reached.");
+    }
+    
+    try {
+      const base64Data = currentSrc.split(',')[1];
+      const description = await describeImage(base64Data);
+      const fullPrompt = `Image Description:\n\n${description}`;
+
+      const newOriginalFrames = originalFrames.map(frame => 
+        frame.src === currentSrc ? { ...frame, prompt: fullPrompt } : frame
+      );
+      setOriginalFrames(newOriginalFrames);
+      setDescribeCount(prev => prev + 1);
+      
+      if (previewImages) {
+        const newPreviewItems = previewImages.items.map(item =>
+          item.src === currentSrc
+            ? { ...item, prompt: fullPrompt }
+            : item
+        );
+        setPreviewImages({ ...previewImages, items: newPreviewItems });
+      }
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      alert(`Failed to describe image. ${errorMessage}`);
+      throw error;
+    }
+  };
+  
+  const handleBatchDescribe = useCallback(async () => {
+    if (selectedFrames.size === 0) return;
+
+    const remainingDescriptions = SESSION_DESCRIBE_LIMIT - describeCount;
+    if (remainingDescriptions <= 0) {
+        alert("You have reached the description limit of 5 frames for this session.");
+        return;
+    }
+
+    setIsLoading(true);
+    
+    let indicesToProcess = Array.from(selectedFrames).filter(index => !originalFrames[index].prompt);
+    
+    if (indicesToProcess.length === 0) {
+        setProgressMessage("All selected frames are already described.");
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        setIsLoading(false);
+        setProgressMessage('');
+        setSelectedFrames(new Set());
+        setActiveSelection(null);
+        return;
+    }
+
+    if (indicesToProcess.length > remainingDescriptions) {
+        alert(`You can describe ${remainingDescriptions} more frame(s) this session. Processing the first ${remainingDescriptions} undescribed frame(s).`);
+        indicesToProcess = indicesToProcess.slice(0, remainingDescriptions);
+    }
+    
+    let newOriginals = [...originalFrames];
+    let descriptionsMade = 0;
+    
+    try {
+        for (let i = 0; i < indicesToProcess.length; i++) {
+            const frameIndex = indicesToProcess[i];
+            const frame = newOriginals[frameIndex];
+
+            setProgressMessage(`Describing frame ${frameIndex + 1} (${i + 1} of ${indicesToProcess.length})...`);
+            
+            const base64Data = frame.src.split(',')[1];
+            const description = await describeImage(base64Data);
+            
+            newOriginals[frameIndex] = { ...frame, prompt: `Image Description:\n\n${description}` };
+            setOriginalFrames([...newOriginals]);
+            descriptionsMade++;
+
+            if (i < indicesToProcess.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, API_CALL_DELAY_MS));
+            }
+        }
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        alert(`An error occurred during description. ${errorMessage}`);
+    } finally {
+        setDescribeCount(prev => prev + descriptionsMade);
+        setIsLoading(false);
+        setProgressMessage('');
+        setSelectedFrames(new Set());
+        setActiveSelection(null);
+    }
+  }, [originalFrames, selectedFrames, describeCount]);
+
+
   const handleFramePreview = (src: string, gallery: 'original' | 'regenerated') => {
-    const frameList = gallery === 'original' ? originalFrames : regeneratedFrames;
-    const validFrames = frameList.filter(f => f);
-    const startIndex = validFrames.indexOf(src);
-    if (startIndex !== -1) {
-      setPreviewImages({ 
-        srcs: validFrames, 
-        startIndex, 
-        isEditable: gallery === 'regenerated' 
-      });
+    if (gallery === 'original') {
+        const validFrames = originalFrames.filter(f => f.src);
+        const startIndex = validFrames.findIndex(f => f.src === src);
+        if (startIndex !== -1) {
+            setPreviewImages({ 
+                items: validFrames,
+                startIndex, 
+                isEditable: false 
+            });
+        }
+    } else { // regenerated
+        const validItems = regeneratedFrames.filter((f): f is RegeneratedFrame => !!f);
+        const startIndex = validItems.findIndex(item => item.src === src);
+        if (startIndex !== -1) {
+            setPreviewImages({
+                items: validItems,
+                startIndex,
+                isEditable: true,
+            });
+        }
     }
   };
   
   const handlePreviewSelected = useCallback(() => {
     if (selectedFrames.size === 0) return;
-    const selectedSrcs = Array.from(selectedFrames)
+    const selectedItems = Array.from(selectedFrames)
         .sort((a, b) => a - b)
         .map(index => originalFrames[index]);
-    setPreviewImages({ srcs: selectedSrcs, startIndex: 0, isEditable: false });
+    setPreviewImages({ items: selectedItems, startIndex: 0, isEditable: false });
   }, [selectedFrames, originalFrames]);
   
   const handlePreviewSelectedRegenerated = useCallback(() => {
     if (selectedRegenFrames.size === 0) return;
-    const selectedSrcs = Array.from(selectedRegenFrames)
+    const selectedItems = Array.from(selectedRegenFrames)
         .sort((a, b) => a - b)
-        .map(index => regeneratedFrames[index]);
-    setPreviewImages({ srcs: selectedSrcs, startIndex: 0, isEditable: true });
+        .map(index => regeneratedFrames[index])
+        .filter((item): item is RegeneratedFrame => !!item);
+
+    if (selectedItems.length > 0) {
+      setPreviewImages({ items: selectedItems, startIndex: 0, isEditable: true });
+    }
   }, [selectedRegenFrames, regeneratedFrames]);
   
   const handleDownloadSelectedOriginal = async () => {
@@ -348,7 +412,7 @@ export default function App() {
 
         for (let i = 0; i < selectedArray.length; i++) {
             const frameIndex = selectedArray[i];
-            const frameData = originalFrames[frameIndex];
+            const frameData = originalFrames[frameIndex].src;
             if (frameData) {
                 const base64 = frameData.split(',')[1];
                 const fileName = `original_frame_${String(frameIndex + 1).padStart(4, '0')}.jpg`;
@@ -389,7 +453,7 @@ export default function App() {
 
         for (let i = 0; i < selectedArray.length; i++) {
             const frameIndex = selectedArray[i];
-            const frameData = regeneratedFrames[frameIndex];
+            const frameData = regeneratedFrames[frameIndex]?.src;
             if (frameData) {
                 const base64 = frameData.split(',')[1];
                 const fileName = `regenerated_frame_${String(frameIndex + 1).padStart(4, '0')}.jpg`;
@@ -424,11 +488,11 @@ export default function App() {
   };
   
   const validRegenCount = regeneratedFrames.filter(f => f).length;
+  const remainingDescribes = SESSION_DESCRIBE_LIMIT - describeCount;
 
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 font-sans pb-24 relative">
-      <ApiKeyManager onChangeApiKey={handleChangeApiKey} />
       {isLoading && <Loader message={progressMessage} />}
       <main className="container mx-auto px-4 py-8">
         <Header />
@@ -451,7 +515,7 @@ export default function App() {
               <div className="w-full h-px bg-gray-700"></div>
               <Gallery 
                 title="Original Frames" 
-                frames={originalFrames} 
+                frames={originalFrames.map(f => f.src)} 
                 selectedFrames={selectedFrames}
                 onFrameSelect={handleFrameSelect}
                 onFramePreview={(src) => handleFramePreview(src, 'original')}
@@ -460,20 +524,14 @@ export default function App() {
                 isAllSelected={originalFrames.length > 0 && selectedFrames.size === originalFrames.length}
               />
               <div className="w-full h-px bg-gray-700"></div>
-              <Controls
-                selectedStyle={selectedStyle}
-                onStyleChange={setSelectedStyle}
-                onRegenerate={() => handleRegenerate()}
-                disabled={isLoading || activeSelection !== null}
-                remainingRegens={remainingRegens}
-              />
+              <Controls />
             </>
           )}
 
           {validRegenCount > 0 && (
              <Gallery 
                 title="Regenerated Frames" 
-                frames={regeneratedFrames} 
+                frames={regeneratedFrames.map(f => f?.src ?? '')} 
                 selectedFrames={selectedRegenFrames}
                 onFrameSelect={handleRegenFrameSelect}
                 onFramePreview={(src) => handleFramePreview(src, 'regenerated')}
@@ -490,10 +548,11 @@ export default function App() {
             selectionCount={selectedFrames.size}
             onDelete={handleDeleteSelected}
             onRegenerate={() => handleRegenerate(Array.from(selectedFrames))}
+            onDescribe={handleBatchDescribe}
             onPreviewSelected={handlePreviewSelected}
             onDownload={handleDownloadSelectedOriginal}
             disabled={isLoading}
-            remainingRegens={remainingRegens}
+            remainingDescribes={remainingDescribes}
         />
       )}
       
@@ -505,16 +564,17 @@ export default function App() {
             onPreviewSelected={handlePreviewSelectedRegenerated}
             onDownload={handleDownloadSelectedRegenerated}
             disabled={isLoading}
-            remainingRegens={remainingRegens}
         />
       )}
       
       {previewImages && <ImagePreviewModal 
-        srcs={previewImages.srcs} 
+        items={previewImages.items} 
         startIndex={previewImages.startIndex} 
         onClose={handleClosePreview}
         isEditable={previewImages.isEditable}
         onEdit={handleEditImage}
+        onDescribe={handleDescribeImage}
+        remainingDescribes={remainingDescribes}
       />}
     </div>
   );

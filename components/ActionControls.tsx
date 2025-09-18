@@ -4,22 +4,24 @@ interface ActionControlsProps {
   selectionCount: number;
   onDelete: () => void;
   onRegenerate: () => void;
+  onDescribe: () => void;
   onPreviewSelected: () => void;
   onDownload: () => void;
   disabled: boolean;
-  remainingRegens: number;
+  remainingDescribes: number;
 }
 
 const ActionControls: React.FC<ActionControlsProps> = ({ 
     selectionCount, 
     onDelete, 
     onRegenerate, 
+    onDescribe,
     onPreviewSelected,
     onDownload,
     disabled,
-    remainingRegens
+    remainingDescribes
 }) => {
-  const canRegenerate = selectionCount <= remainingRegens;
+  const canDescribe = remainingDescribes > 0;
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-20 p-2 sm:p-4 flex justify-center">
@@ -29,21 +31,32 @@ const ActionControls: React.FC<ActionControlsProps> = ({
           <span className="hidden sm:inline"> frame(s) selected</span>
         </span>
         <div className="w-px h-6 bg-gray-600"></div>
-        <span className="text-sm text-gray-300 px-2" title="Daily regeneration quota">
-          {remainingRegens}
-          <span className="hidden sm:inline"> left today</span>
+        <span className="text-sm text-gray-300 px-2" title="Session description limit">
+          {remainingDescribes}
+          <span className="hidden sm:inline"> describe(s) left</span>
         </span>
         <div className="w-px h-6 bg-gray-600 hidden sm:block"></div>
         <button
           onClick={onRegenerate}
-          disabled={disabled || !canRegenerate}
-          title={!canRegenerate ? `Not enough regenerations left today (${remainingRegens} left).` : 'Regenerate selected frames'}
-          className="flex items-center gap-2 px-3 py-2 sm:px-4 font-semibold text-white bg-purple-600 rounded-md shadow-lg hover:bg-purple-700 transform hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100"
+          disabled={true}
+          title={'AI Regeneration is coming soon!'}
+          className="flex items-center gap-2 px-3 py-2 sm:px-4 font-semibold text-white bg-purple-600 rounded-md shadow-lg opacity-50 cursor-not-allowed"
         >
           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
             <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
           </svg>
           <span className="hidden sm:inline">Regenerate</span>
+        </button>
+        <button
+          onClick={onDescribe}
+          disabled={disabled || !canDescribe}
+          title={!canDescribe ? `Description limit reached for this session.` : "Describe selected frames with Gemini"}
+          className="flex items-center gap-2 px-3 py-2 sm:px-4 font-semibold text-white bg-teal-600 rounded-md shadow-lg hover:bg-teal-700 transform hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
+          </svg>
+          <span className="hidden sm:inline">Describe</span>
         </button>
         <button
           onClick={onDownload}

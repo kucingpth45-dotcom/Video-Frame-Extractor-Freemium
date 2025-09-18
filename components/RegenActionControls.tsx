@@ -7,7 +7,6 @@ interface RegenActionControlsProps {
   onPreviewSelected: () => void;
   onDownload: () => void;
   disabled: boolean;
-  remainingRegens: number;
 }
 
 const RegenActionControls: React.FC<RegenActionControlsProps> = ({ 
@@ -17,9 +16,7 @@ const RegenActionControls: React.FC<RegenActionControlsProps> = ({
     onPreviewSelected,
     onDownload,
     disabled,
-    remainingRegens
 }) => {
-  const canRegenerate = selectionCount <= remainingRegens;
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-20 p-2 sm:p-4 flex justify-center">
@@ -28,17 +25,12 @@ const RegenActionControls: React.FC<RegenActionControlsProps> = ({
           {selectionCount}
           <span className="hidden sm:inline"> result(s) selected</span>
         </span>
-        <div className="w-px h-6 bg-gray-600"></div>
-         <span className="text-sm text-gray-300 px-2" title="Daily regeneration quota">
-          {remainingRegens}
-          <span className="hidden sm:inline"> left today</span>
-        </span>
         <div className="w-px h-6 bg-gray-600 hidden sm:block"></div>
         <button
           onClick={onRegenerateAgain}
-          disabled={disabled || !canRegenerate}
-          title={!canRegenerate ? `Not enough regenerations left today (${remainingRegens} left).` : 'Regenerate selected frames again'}
-          className="flex items-center gap-2 px-3 py-2 sm:px-4 font-semibold text-white bg-purple-600 rounded-md shadow-lg hover:bg-purple-700 transform hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100"
+          disabled={true}
+          title={'AI Regeneration is coming soon!'}
+          className="flex items-center gap-2 px-3 py-2 sm:px-4 font-semibold text-white bg-purple-600 rounded-md shadow-lg opacity-50 cursor-not-allowed"
         >
           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
             <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />

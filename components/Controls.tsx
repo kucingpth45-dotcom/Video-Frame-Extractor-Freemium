@@ -1,54 +1,30 @@
-
 import React from 'react';
-import { ArtStyle } from '../types';
 
-interface ControlsProps {
-  selectedStyle: ArtStyle;
-  onStyleChange: (style: ArtStyle) => void;
-  onRegenerate: () => void;
-  disabled: boolean;
-  remainingRegens: number;
-}
-
-const Controls: React.FC<ControlsProps> = ({ 
-    selectedStyle, 
-    onStyleChange, 
-    onRegenerate, 
-    disabled,
-    remainingRegens
-}) => {
+const Controls: React.FC = () => {
   return (
     <section className="text-center space-y-6">
-      <h2 className="text-2xl font-semibold">2. Configure & Regenerate</h2>
+      <h2 className="text-2xl font-semibold">2. AI Regeneration (Coming Soon!)</h2>
       
       <p className="text-gray-400 max-w-md mx-auto">
-        Select a style and use Gemini to generate brand new, high-detail images based on your original frames. This process may be slower but produces unique results.
+        This feature is currently under development. Soon, you'll be able to regenerate your frames in amazing new artistic styles right here!
       </p>
 
-      {/* Style and Regenerate Button */}
+      {/* Disabled Placeholder Button */}
       <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-        <select
-          value={selectedStyle}
-          onChange={(e) => onStyleChange(e.target.value as ArtStyle)}
-          disabled={disabled}
-          className="w-full sm:w-64 bg-gray-700 border border-gray-600 rounded-md px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all"
+         <div
+          className="w-full sm:w-64 bg-gray-700 border border-gray-600 rounded-md px-4 py-3 text-gray-400 opacity-50 cursor-not-allowed"
         >
-          {Object.values(ArtStyle).map((style) => (
-            <option key={style} value={style}>
-              {style}
-            </option>
-          ))}
-        </select>
+            Select a Style...
+        </div>
         <button
-          onClick={onRegenerate}
-          disabled={disabled || remainingRegens === 0}
-          className="w-full sm:w-auto px-8 py-3 font-semibold text-white bg-gradient-to-r from-purple-600 to-pink-600 rounded-md shadow-lg hover:from-purple-700 hover:to-pink-700 transform hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100"
+          disabled={true}
+          className="w-full sm:w-auto px-8 py-3 font-semibold text-white bg-gradient-to-r from-purple-600 to-pink-600 rounded-md shadow-lg opacity-50 cursor-not-allowed"
         >
-          Regenerate All Frames
+          Regenerate Frames
         </button>
       </div>
-       <p className="text-sm text-gray-400 -mt-2">
-        You have {remainingRegens} frame regeneration{remainingRegens !== 1 ? 's' : ''} left for today.
+       <p className="text-sm text-gray-500 -mt-2">
+        Check back for updates!
       </p>
     </section>
   );
