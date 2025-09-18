@@ -13,7 +13,7 @@ import VideoPreview from './components/VideoPreview';
 
 declare const JSZip: any;
 
-const SESSION_DESCRIBE_LIMIT = 5;
+const DAILY_DESCRIBE_LIMIT = 5;
 const API_CALL_DELAY_MS = 1500; // 1.5 second delay between API calls to avoid rate limiting
 
 interface RegeneratedFrame {
@@ -45,6 +45,30 @@ export default function App() {
   const [previewImages, setPreviewImages] = useState<{ items: Array<{ src: string; prompt?: string; translatedPrompt?: string; }>; startIndex: number; isEditable: boolean; } | null>(null);
   const [aspectRatio, setAspectRatio] = useState<number | null>(null);
 
+  // Effect to load and manage the daily description limit from localStorage
+  useEffect(() => {
+    const today = new Date().toISOString().split('T')[0];
+    const storedLimitRaw = localStorage.getItem('geminiFrameDescribeLimit');
+    let dailyLimitData = { count: 0, date: today };
+
+    if (storedLimitRaw) {
+        try {
+            const parsedData = JSON.parse(storedLimitRaw);
+            // If the stored data is for today, use it. Otherwise, the default reset data is used.
+            if (parsedData.date === today) {
+                dailyLimitData = parsedData;
+            }
+        } catch (e) {
+            console.error("Failed to parse describe limit data from localStorage", e);
+            // If parsing fails, we'll proceed with the default reset data.
+        }
+    }
+    
+    setDescribeCount(dailyLimitData.count);
+    // Ensure localStorage is initialized or reset for the day.
+    localStorage.setItem('geminiFrameDescribeLimit', JSON.stringify(dailyLimitData));
+  }, []); // Empty dependency array ensures this runs only once on mount
+
 
   const handleVideoUpload = useCallback((newVideoFile: File) => {
     setVideoFile(newVideoFile);
@@ -72,6 +96,20 @@ export default function App() {
         return [...prevFrames, { src: frameData }];
     });
   }, []);
+
+  // Helper function to update the describe count in both state and localStorage
+  const updateDescribeCount = (increment: number) => {
+      const newCount = describeCount + increment;
+      if (newCount > DAILY_DESCRIBE_LIMIT) {
+          // This should not happen if checks are correct, but as a safeguard.
+          console.warn("Attempted to exceed daily describe limit.");
+          return;
+      }
+      const today = new Date().toISOString().split('T')[0];
+      const dailyLimitData = { count: newCount, date: today };
+      localStorage.setItem('geminiFrameDescribeLimit', JSON.stringify(dailyLimitData));
+      setDescribeCount(newCount);
+  };
 
   const handleFrameSelect = useCallback((index: number) => {
     setSelectedRegenFrames(new Set());
@@ -262,9 +300,9 @@ export default function App() {
   };
 
   const handleDescribeImage = async (currentSrc: string) => {
-    const remainingDescriptions = SESSION_DESCRIBE_LIMIT - describeCount;
+    const remainingDescriptions = DAILY_DESCRIBE_LIMIT - describeCount;
     if (remainingDescriptions <= 0) {
-      alert("You have reached the description limit of 5 frames for this session.");
+      alert("You have reached the daily description limit of 5 frames.");
       throw new Error("Description limit reached.");
     }
     
@@ -277,7 +315,7 @@ export default function App() {
         frame.src === currentSrc ? { ...frame, prompt: fullPrompt, translatedPrompt: undefined } : frame
       );
       setOriginalFrames(newOriginalFrames);
-      setDescribeCount(prev => prev + 1);
+      updateDescribeCount(1);
       
       if (previewImages) {
         const newPreviewItems = previewImages.items.map(item =>
@@ -334,9 +372,9 @@ export default function App() {
   const handleBatchDescribe = useCallback(async () => {
     if (selectedFrames.size === 0) return;
 
-    const remainingDescriptions = SESSION_DESCRIBE_LIMIT - describeCount;
+    const remainingDescriptions = DAILY_DESCRIBE_LIMIT - describeCount;
     if (remainingDescriptions <= 0) {
-        alert("You have reached the description limit of 5 frames for this session.");
+        alert("You have reached the daily description limit of 5 frames.");
         return;
     }
 
@@ -355,7 +393,7 @@ export default function App() {
     }
 
     if (indicesToProcess.length > remainingDescriptions) {
-        alert(`You can describe ${remainingDescriptions} more frame(s) this session. Processing the first ${remainingDescriptions} undescribed frame(s).`);
+        alert(`You can describe ${remainingDescriptions} more frame(s) today. Processing the first ${remainingDescriptions} undescribed frame(s).`);
         indicesToProcess = indicesToProcess.slice(0, remainingDescriptions);
     }
     
@@ -384,7 +422,9 @@ export default function App() {
         const errorMessage = error instanceof Error ? error.message : String(error);
         alert(`An error occurred during description. ${errorMessage}`);
     } finally {
-        setDescribeCount(prev => prev + descriptionsMade);
+        if (descriptionsMade > 0) {
+            updateDescribeCount(descriptionsMade);
+        }
         setIsLoading(false);
         setProgressMessage('');
         setSelectedFrames(new Set());
@@ -525,7 +565,7 @@ export default function App() {
   };
   
   const validRegenCount = regeneratedFrames.filter(f => f).length;
-  const remainingDescribes = SESSION_DESCRIBE_LIMIT - describeCount;
+  const remainingDescribes = DAILY_DESCRIBE_LIMIT - describeCount;
 
 
   return (

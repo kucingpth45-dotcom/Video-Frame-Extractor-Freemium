@@ -175,7 +175,7 @@ const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({ items, startIndex
                             <button 
                                 onClick={handleDescribeClick} 
                                 disabled={isDescribing || !canDescribe}
-                                title={!canDescribe ? "Description limit reached for this session" : "Generate a description for this image"}
+                                title={!canDescribe ? "Daily description limit reached" : "Generate a description for this image"}
                                 className="flex items-center gap-2 text-white hover:text-purple-400 transition-colors p-1 disabled:opacity-50 disabled:cursor-wait"
                                 aria-label="Generate a description for this image"
                             >
