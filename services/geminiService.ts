@@ -5,7 +5,7 @@ import { ArtStyle, RegenerationEngine } from "../types";
 const API_KEY = process.env.NEXT_PUBLIC_API_KEY;
 
 if (!API_KEY) {
-  throw new Error("API_KEY environment variable is not set.");
+  throw new Error("NEXT_PUBLIC_API_KEY environment variable is not set.");
 }
 
 const ai = new GoogleGenAI({ apiKey: API_KEY });
