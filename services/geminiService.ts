@@ -1,15 +1,35 @@
+
 import { GoogleGenAI, Modality, Part } from "@google/genai";
 import { ArtStyle } from "../types";
 
-// IMPORTANT: Assumes API_KEY is set in the environment variables
-const API_KEY = import.meta.env.VITE_API_KEY;
-
-if (!API_KEY) {
-  throw new Error("VITE_API_KEY environment variable is not set.");
+const getApiKey = (): string => {
+    // Prefer the key from localStorage, fall back to environment variable.
+    return localStorage.getItem('gemini_api_key') || process.env.API_KEY || '';
 }
 
-const ai = new GoogleGenAI({ apiKey: API_KEY });
+/**
+ * Updates the API key in localStorage.
+ * @param key The new API key. If empty or null, the key is removed.
+ */
+export const setApiKey = (key: string) => {
+    if (key) {
+        localStorage.setItem('gemini_api_key', key);
+    } else {
+        localStorage.removeItem('gemini_api_key');
+    }
+}
 
+/**
+ * Creates and returns a new GoogleGenAI instance with the current API key.
+ * @throws An error if the API key is not set.
+ */
+const getAiClient = () => {
+    const apiKey = getApiKey();
+    if (!apiKey) {
+      throw new Error('Gemini API key is not set. Please add a key in the settings (top-right icon).');
+    }
+    return new GoogleGenAI({ apiKey });
+}
 
 /**
  * Uses Gemini to generate a textual description of a given image.
@@ -17,6 +37,7 @@ const ai = new GoogleGenAI({ apiKey: API_KEY });
  * @returns A promise that resolves to a detailed description of the image.
  */
 async function describeImage(base64Data: string): Promise<string> {
+    const ai = getAiClient();
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: {
@@ -43,6 +64,7 @@ async function describeImage(base64Data: string): Promise<string> {
  * @returns A promise that resolves to the base64 encoded string of the generated image.
  */
 async function generateImageWithImagen(prompt: string, aspectRatio: number): Promise<string> {
+    const ai = getAiClient();
     // Determine the closest aspect ratio string supported by the Imagen API
     let apiAspectRatio: '1:1' | '16:9' | '9:16' | '4:3' | '3:4' = '1:1';
     if (aspectRatio) {
@@ -131,16 +153,16 @@ export const regenerateImage = async (
     console.error("Error calling Gemini API:", error);
     if (error instanceof Error) {
         if (error.message.includes('API key not valid')) {
-            throw new Error('The provided Gemini API key is not valid. Please check your key.');
+            throw new Error('Your Gemini API key is not valid. Please use the settings icon to update it.');
         }
         if (error.message.includes('429') || error.message.includes('RESOURCE_EXHAUSTED')) {
-            throw new Error('API rate limit exceeded. Please wait a moment before trying again or regenerate a smaller selection of frames.');
+            throw new Error('API rate limit or quota exceeded. Please wait a moment, or use the settings icon to provide a new API key.');
         }
         if (error.message.includes('blocked')) {
-            throw error;
+            throw new Error('Image generation was blocked due to safety policies. Please try a different frame.');
         }
     }
-    throw new Error('Failed to regenerate image with Gemini.');
+    throw new Error('Failed to regenerate image with Gemini. Check the console for details.');
   }
 };
 
@@ -155,6 +177,7 @@ export const editImage = async (
   prompt: string,
 ): Promise<string> => {
   try {
+    const ai = getAiClient();
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-image-preview',
       contents: {
@@ -192,15 +215,15 @@ export const editImage = async (
     console.error("Error calling Gemini API for editing:", error);
     if (error instanceof Error) {
         if (error.message.includes('API key not valid')) {
-            throw new Error('The provided Gemini API key is not valid. Please check your key.');
+            throw new Error('Your Gemini API key is not valid. Please use the settings icon to update it.');
         }
         if (error.message.includes('429') || error.message.includes('RESOURCE_EXHAUSTED')) {
-            throw new Error('API rate limit exceeded. Please wait a moment before trying again.');
+            throw new Error('API rate limit or quota exceeded. Please wait a moment, or use the settings icon to provide a new API key.');
         }
         if (error.message.includes('blocked')) {
             throw error;
         }
     }
-    throw new Error('Failed to edit image with Gemini.');
+    throw new Error('Failed to edit image with Gemini. Check the console for details.');
   }
 };

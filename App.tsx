@@ -1,7 +1,7 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
 import { ArtStyle } from './types';
-import { regenerateImage, editImage } from './services/geminiService';
+import { regenerateImage, editImage, setApiKey } from './services/geminiService';
 import Header from './components/Header';
 import UploadSection from './components/UploadSection';
 import Controls from './components/Controls';
@@ -11,6 +11,7 @@ import ActionControls from './components/ActionControls';
 import RegenActionControls from './components/RegenActionControls';
 import ImagePreviewModal from './components/ImagePreviewModal';
 import VideoPreview from './components/VideoPreview';
+import ApiKeyManager from './components/ApiKeyManager';
 
 declare const JSZip: any;
 
@@ -54,6 +55,17 @@ export default function App() {
         }
     }
     setRemainingRegens(DAILY_REGEN_LIMIT - currentCount);
+  }, []);
+
+  const handleChangeApiKey = useCallback(() => {
+    const currentKey = localStorage.getItem('gemini_api_key') || '';
+    const newKey = window.prompt("Please enter your Gemini API key:", currentKey);
+    
+    // The prompt returns null if the user cancels.
+    if (newKey !== null) {
+        setApiKey(newKey);
+        alert(newKey ? "API Key updated. Your next request will use the new key." : "API Key cleared. The app will now use the default key if available.");
+    }
   }, []);
 
 
@@ -242,8 +254,8 @@ export default function App() {
         }
       }
     } catch (error) {
-      console.error('Error regenerating frames:', error);
-      alert(`An error occurred during regeneration. Please check your Gemini API key and try again. Error: ${error instanceof Error ? error.message : String(error)}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      alert(`An error occurred during regeneration. ${errorMessage}`);
     } finally {
       setIsLoading(false);
       setProgressMessage('');
@@ -289,8 +301,8 @@ export default function App() {
       }
 
     } catch (error) {
-      console.error('Error editing image:', error);
-      alert(`Failed to edit image. ${error instanceof Error ? error.message : String(error)}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      alert(`Failed to edit image. ${errorMessage}`);
       throw error;
     }
   };
@@ -415,7 +427,8 @@ export default function App() {
 
 
   return (
-    <div className="min-h-screen bg-gray-900 text-gray-100 font-sans pb-24">
+    <div className="min-h-screen bg-gray-900 text-gray-100 font-sans pb-24 relative">
+      <ApiKeyManager onChangeApiKey={handleChangeApiKey} />
       {isLoading && <Loader message={progressMessage} />}
       <main className="container mx-auto px-4 py-8">
         <Header />
