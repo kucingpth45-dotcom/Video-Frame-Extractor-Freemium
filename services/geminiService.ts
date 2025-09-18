@@ -2,7 +2,7 @@ import { GoogleGenAI, Modality, Part } from "@google/genai";
 import { ArtStyle, RegenerationEngine } from "../types";
 
 // IMPORTANT: Assumes API_KEY is set in the environment variables
-const API_KEY = process.env.API_KEY;
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY;
 
 if (!API_KEY) {
   throw new Error("API_KEY environment variable is not set.");
