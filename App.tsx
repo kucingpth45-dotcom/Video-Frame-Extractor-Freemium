@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { ArtStyle } from './types';
 import { regenerateImage, editImage, describeImage, translateText } from './services/geminiService';
+import { extractFrames } from './utils/videoProcessor';
 import Header from './components/Header';
 import UploadSection from './components/UploadSection';
 import Controls from './components/Controls';
@@ -10,10 +11,12 @@ import ActionControls from './components/ActionControls';
 import RegenActionControls from './components/RegenActionControls';
 import ImagePreviewModal from './components/ImagePreviewModal';
 import VideoPreview from './components/VideoPreview';
+import ProcessingControls from './components/ProcessingControls';
 
 declare const JSZip: any;
 
 const DAILY_DESCRIBE_LIMIT = 5;
+const DAILY_EXTRACT_LIMIT = 10;
 const API_CALL_DELAY_MS = 1500; // 1.5 second delay between API calls to avoid rate limiting
 
 interface RegeneratedFrame {
@@ -37,6 +40,10 @@ export default function App() {
   const [progressMessage, setProgressMessage] = useState<string>('');
   
   const [describeCount, setDescribeCount] = useState<number>(0);
+  const [extractCount, setExtractCount] = useState<number>(0);
+
+  const [blurThreshold, setBlurThreshold] = useState<number>(50);
+  const [similarityThreshold, setSimilarityThreshold] = useState<number>(10);
 
   const [selectedFrames, setSelectedFrames] = useState<Set<number>>(new Set());
   const [selectedRegenFrames, setSelectedRegenFrames] = useState<Set<number>>(new Set());
@@ -68,6 +75,27 @@ export default function App() {
     // Ensure localStorage is initialized or reset for the day.
     localStorage.setItem('geminiFrameDescribeLimit', JSON.stringify(dailyLimitData));
   }, []); // Empty dependency array ensures this runs only once on mount
+  
+  // Effect to load and manage the daily extraction limit from localStorage
+  useEffect(() => {
+    const today = new Date().toISOString().split('T')[0];
+    const storedLimitRaw = localStorage.getItem('geminiFrameExtractLimit');
+    let dailyLimitData = { count: 0, date: today };
+
+    if (storedLimitRaw) {
+        try {
+            const parsedData = JSON.parse(storedLimitRaw);
+            if (parsedData.date === today) {
+                dailyLimitData = parsedData;
+            }
+        } catch (e) {
+            console.error("Failed to parse extract limit data from localStorage", e);
+        }
+    }
+    
+    setExtractCount(dailyLimitData.count);
+    localStorage.setItem('geminiFrameExtractLimit', JSON.stringify(dailyLimitData));
+  }, []);
 
 
   const handleVideoUpload = useCallback((newVideoFile: File) => {
@@ -110,6 +138,67 @@ export default function App() {
       localStorage.setItem('geminiFrameDescribeLimit', JSON.stringify(dailyLimitData));
       setDescribeCount(newCount);
   };
+  
+  const updateExtractCount = (increment: number) => {
+      const newCount = extractCount + increment;
+      if (newCount > DAILY_EXTRACT_LIMIT) {
+          console.warn("Attempted to exceed daily extract limit.");
+          return;
+      }
+      const today = new Date().toISOString().split('T')[0];
+      const dailyLimitData = { count: newCount, date: today };
+      localStorage.setItem('geminiFrameExtractLimit', JSON.stringify(dailyLimitData));
+      setExtractCount(newCount);
+  };
+  
+  const handleAutoExtractFrames = useCallback(async () => {
+    if (!videoFile) return;
+
+    const remainingExtractions = DAILY_EXTRACT_LIMIT - extractCount;
+    if (remainingExtractions <= 0) {
+        alert("You have reached the daily limit of 10 auto-extracted frames.");
+        return;
+    }
+
+    setIsLoading(true);
+    setProgressMessage('Analyzing video for unique frames...');
+    setOriginalFrames([]);
+    setRegeneratedFrames([]);
+    setSelectedFrames(new Set());
+    setSelectedRegenFrames(new Set());
+    setActiveSelection(null);
+
+    try {
+        const maxFramesToExtract = 10;
+        const effectiveMaxFrames = Math.min(maxFramesToExtract, remainingExtractions);
+
+        const { frames, aspectRatio: newAspectRatio } = await extractFrames(
+            videoFile,
+            2, // fps to check
+            effectiveMaxFrames,
+            (progress) => {
+                setProgressMessage(`Found ${progress.current} of ${progress.total} unique frames...`);
+            },
+            { blurThreshold, similarityThreshold }
+        );
+
+        if (frames.length > 0) {
+            setOriginalFrames(frames.map(src => ({ src })));
+            setAspectRatio(newAspectRatio);
+            updateExtractCount(frames.length);
+        } else {
+            setProgressMessage('No new unique frames found with current settings. Try adjusting the sensitivity.');
+            await new Promise(resolve => setTimeout(resolve, 2500));
+        }
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        alert(`An error occurred during frame extraction: ${errorMessage}`);
+    } finally {
+        setIsLoading(false);
+        setProgressMessage('');
+    }
+  }, [videoFile, extractCount, blurThreshold, similarityThreshold]);
+
 
   const handleFrameSelect = useCallback((index: number) => {
     setSelectedRegenFrames(new Set());
@@ -566,7 +655,7 @@ export default function App() {
   
   const validRegenCount = regeneratedFrames.filter(f => f).length;
   const remainingDescribes = DAILY_DESCRIBE_LIMIT - describeCount;
-
+  const remainingExtractions = DAILY_EXTRACT_LIMIT - extractCount;
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 font-sans pb-24 relative">
@@ -578,13 +667,26 @@ export default function App() {
           {!videoSrc ? (
             <UploadSection onVideoUpload={handleVideoUpload} disabled={isLoading} />
           ) : (
-            <VideoPreview 
-                src={videoSrc}
-                onFrameExtracted={handleManualFrameExtract}
-                onVideoLoaded={setAspectRatio}
-                onVideoChange={handleVideoUpload}
-                disabled={isLoading}
-            />
+            <>
+              <VideoPreview 
+                  src={videoSrc}
+                  onFrameExtracted={handleManualFrameExtract}
+                  onVideoLoaded={setAspectRatio}
+                  onVideoChange={handleVideoUpload}
+                  disabled={isLoading}
+                  onAutoExtract={handleAutoExtractFrames}
+                  remainingExtractions={remainingExtractions}
+              />
+              <div className="w-full h-px bg-gray-700"></div>
+              <ProcessingControls
+                blurThreshold={blurThreshold}
+                onBlurChange={setBlurThreshold}
+                similarityThreshold={similarityThreshold}
+                onSimilarityChange={setSimilarityThreshold}
+                onReExtract={handleAutoExtractFrames}
+                disabled={isLoading || remainingExtractions <= 0}
+              />
+            </>
           )}
 
           {originalFrames.length > 0 && (

@@ -1,4 +1,3 @@
-
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 
 interface VideoPreviewProps {
@@ -7,9 +6,11 @@ interface VideoPreviewProps {
   onVideoLoaded: (aspectRatio: number) => void;
   onVideoChange: (file: File) => void;
   disabled: boolean;
+  onAutoExtract: () => void;
+  remainingExtractions: number;
 }
 
-const VideoPreview: React.FC<VideoPreviewProps> = ({ src, onFrameExtracted, onVideoLoaded, onVideoChange, disabled }) => {
+const VideoPreview: React.FC<VideoPreviewProps> = ({ src, onFrameExtracted, onVideoLoaded, onVideoChange, disabled, onAutoExtract, remainingExtractions }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [currentTime, setCurrentTime] = useState(0);
@@ -124,11 +125,12 @@ const VideoPreview: React.FC<VideoPreviewProps> = ({ src, onFrameExtracted, onVi
                     Extract Current Frame
                 </button>
                 <button
-                    disabled={true}
-                    title="Auto-extraction is currently disabled."
-                    className="w-full sm:w-auto px-6 py-2 font-semibold text-white bg-gray-600 rounded-md shadow-md hover:bg-gray-500 transform hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100"
+                    onClick={onAutoExtract}
+                    disabled={disabled || remainingExtractions <= 0}
+                    title={remainingExtractions <= 0 ? "Daily extraction limit reached" : `Automatically extract up to ${remainingExtractions} unique frames`}
+                    className="w-full sm:w-auto px-6 py-2 font-semibold text-white bg-teal-600 rounded-md shadow-md hover:bg-teal-500 transform hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100"
                 >
-                    Auto-Extract Unique Frames
+                    Auto-Extract Frames ({remainingExtractions} left)
                 </button>
                  <button
                     onClick={handleChangeVideoClick}
